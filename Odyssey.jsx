@@ -94,7 +94,7 @@ const PAD=34;
 /* ===================================================================== *
  *  MAP CANVAS                                                           *
  * ===================================================================== */
-function MapCanvas({points,frame,closed,underlay,color,height=470,interactive,ghost,picked,onAdd,onMove,onRemove,onPick,showNames,showOrder}){
+function MapCanvas({points,frame,closed,underlay,color,height=470,interactive,ghost,picked,onAdd,onMove,onRemove,onPick,showNames,showOrder,criticalMode,onToggleCritical}){
   const ref=useRef(null);const drag=useRef({id:null});const last=useRef(0);
   const map=cv=>{const r=cv.getBoundingClientRect();return{rect:r,W:r.width,H:r.height,X:x=>PAD+x*(r.width-2*PAD),Y:y=>PAD+y*(r.height-2*PAD)};};
   const toNorm=(cv,e)=>{const{rect}=map(cv);return{x:Math.min(1,Math.max(0,(e.clientX-rect.left-PAD)/(rect.width-2*PAD))),y:Math.min(1,Math.max(0,(e.clientY-rect.top-PAD)/(rect.height-2*PAD)))};};
@@ -131,7 +131,7 @@ function MapCanvas({points,frame,closed,underlay,color,height=470,interactive,gh
       else if(!showNames&&points.length<=22&&!showOrder){ctx.fillStyle=R.mut2;ctx.font="10px 'Space Mono',monospace";ctx.fillText(String(p.id),px+8,py-7);}}
   },[points,frame,closed,underlay,color,height,ghost,picked,showNames,showOrder]);
   const handlers=interactive?{
-    onPointerDown:e=>{const cv=ref.current;if(interactive==="play"){const id=hit(cv,e);if(id>=0)onPick&&onPick(id);return;}const id=hit(cv,e);if(id>=0){drag.current={id};}else{const{x,y}=toNorm(cv,e);onAdd&&onAdd(x,y);}},
+    onPointerDown:e=>{const cv=ref.current;if(interactive==="play"){const id=hit(cv,e);if(id>=0)onPick&&onPick(id);return;}const id=hit(cv,e);if(criticalMode){if(id>=0){onToggleCritical&&onToggleCritical(id);}else{const{x,y}=toNorm(cv,e);onAdd&&onAdd(x,y,true);}return;}if(id>=0){drag.current={id};}else{const{x,y}=toNorm(cv,e);onAdd&&onAdd(x,y);}},
     onPointerMove:e=>{if(drag.current.id===null||drag.current.id<0)return;const now=performance.now();if(now-last.current<28)return;last.current=now;const{x,y}=toNorm(ref.current,e);onMove&&onMove(drag.current.id,x,y);},
     onPointerUp:()=>{drag.current={id:null};},onPointerLeave:()=>{drag.current={id:null};},
     onDoubleClick:e=>{const id=hit(ref.current,e);if(id>0)onRemove&&onRemove(id);},
@@ -185,9 +185,10 @@ export default function Odyssey(){
   const n=points.length;
   const optimal=useMemo(()=>(n<=EXACT_CAP?heldKarp(D):null),[D,n]);
   const sc=SCENARIOS[scenario];
-  const addCity=(x,y)=>setCustomPts(p=>p.length>=80?p:[...p,{id:p.length,x,y}]);
+  const addCity=(x,y,critical=false)=>setCustomPts(p=>p.length>=80?p:[...p,{id:p.length,x,y,critical}]);
   const moveCity=(id,x,y)=>setCustomPts(p=>p.map(pt=>pt.id===id?{...pt,x,y}:pt));
   const removeCity=id=>setCustomPts(p=>p.length<=4?p:p.filter(pt=>pt.id!==id).map((pt,i)=>({...pt,id:i})));
+  const toggleCritical=id=>setCustomPts(p=>p.map(pt=>pt.id===id&&pt.id!==0?{...pt,critical:!pt.critical}:pt));
   const reshuffle=()=>{const s=custom.seed+1;setCustom(c=>({...c,seed:s}));setCustomPts(genClusters(custom.n,s));};
   const resize=v=>{setCustom(c=>({...c,n:v}));setCustomPts(genClusters(v,custom.seed));};
 
@@ -242,7 +243,7 @@ export default function Odyssey(){
       <div style={{padding:"8px 28px 0",fontSize:13,color:R.mut,maxWidth:860,fontWeight:500}}>{sc.story}</div>
 
       <div style={{padding:"18px 28px 34px"}}>
-        {mode==="plan"&&<PlanMode {...{points,D,n,optimal,scenario,addCity,moveCity,removeCity}}/>}
+        {mode==="plan"&&<PlanMode {...{points,D,n,optimal,scenario,addCity,moveCity,removeCity,toggleCritical}}/>}
         {mode==="race"&&<RaceMode {...{points,D,n,scenario}}/>}
         {mode==="play"&&<PlayMode {...{points,D,n,optimal,scenario}}/>}
         {mode==="analyze"&&<AnalyzeMode {...{points,D,n,optimal}}/>}
@@ -257,12 +258,13 @@ export default function Odyssey(){
 }
 
 /* ---------------- PLAN ---------------- */
-function PlanMode({points,D,n,optimal,scenario,addCity,moveCity,removeCity}){
+function PlanMode({points,D,n,optimal,scenario,addCity,moveCity,removeCity,toggleCritical}){
   const [algo,setAlgo]=useState("twoopt");
   const [playing,setPlaying]=useState(true);
   const [idx,setIdx]=useState(0);
   const [speed,setSpeed]=useState(1);
   const [manifest,setManifest]=useState(false);
+  const [criticalMode,setCriticalMode]=useState(false);
   const disabled=algo==="heldkarp"&&n>EXACT_CAP;
   const result=useMemo(()=>disabled?null:runAlgo(algo,D),[algo,D,disabled]);
   const frames=useMemo(()=>framesFor(result,n),[result,n]);
@@ -304,7 +306,14 @@ function PlanMode({points,D,n,optimal,scenario,addCity,moveCity,removeCity}){
         <div style={{...card,overflow:"hidden"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"11px 16px",borderBottom:BORDER,background:R.paper}}>
             <div style={{display:"flex",alignItems:"center",gap:9}}><meta.icon size={16} color={meta.color}/><span style={{fontSize:16,fontWeight:900,textTransform:"uppercase",letterSpacing:.2}}>{meta.name}</span><span style={{fontSize:11,fontWeight:700,color:R.mut}}>· {meta.guarantee}</span></div>
-            {scenario==="custom"&&<span style={{fontSize:10.5,fontWeight:700,color:R.mut,textTransform:"uppercase"}}>click add · drag move · 2×click delete</span>}
+            {scenario==="custom"&&(
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <button onClick={()=>setCriticalMode(m=>!m)} style={{display:"flex",alignItems:"center",gap:5,padding:"4px 9px",borderRadius:6,cursor:"pointer",fontFamily:"var(--sans)",fontSize:10.5,fontWeight:800,textTransform:"uppercase",letterSpacing:.3,border:`2px solid ${R.ink}`,background:criticalMode?R.red:"#fff",color:criticalMode?"#fff":R.ink,boxShadow:criticalMode?"none":SHADOW_SM}}>
+                  <AlertTriangle size={12}/>{criticalMode?"Critical on":"Mark critical"}
+                </button>
+                <span style={{fontSize:10.5,fontWeight:700,color:R.mut,textTransform:"uppercase"}}>{criticalMode?"tap a spot to save critical · tap a stop to flag":"click add · drag move · 2×click delete"}</span>
+              </div>
+            )}
           </div>
           {disabled?(
             <div style={{height:470,display:"grid",placeItems:"center",textAlign:"center",padding:30,background:"#fff"}}>
@@ -312,7 +321,8 @@ function PlanMode({points,D,n,optimal,scenario,addCity,moveCity,removeCity}){
             </div>
           ):(
             <MapCanvas points={points} frame={frame} closed={closed} underlay={algo==="mst"||algo==="christofides"?under:null} color={meta.color}
-              showNames={scenario!=="custom"} showOrder={closed} interactive={scenario==="custom"?"edit":null} onAdd={addCity} onMove={moveCity} onRemove={removeCity}/>
+              showNames={scenario!=="custom"} showOrder={closed} interactive={scenario==="custom"?"edit":null} onAdd={addCity} onMove={moveCity} onRemove={removeCity}
+              criticalMode={criticalMode} onToggleCritical={toggleCritical}/>
           )}
           {!disabled&&(
             <div style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",borderTop:BORDER,background:R.paper}}>
@@ -389,7 +399,8 @@ function RaceMode({points,D,n,scenario}){
   useEffect(()=>{setP(0);setPlaying(true);},[D]);
   useEffect(()=>{if(!playing)return;const dur=4200;let raf;const start=performance.now()-p*dur;const loop=t=>{const np=Math.min(1,(t-start)/dur);setP(np);if(np>=1){setPlaying(false);return;}raf=requestAnimationFrame(loop);};raf=requestAnimationFrame(loop);return()=>cancelAnimationFrame(raf);},[playing]);
   const winner=Math.min(...runs.map(x=>x.r.length));
-  const board=runs.map(({key,r,frames})=>{const fi=Math.min(frames.length-1,Math.floor(p*(frames.length-1)));const f=frames[fi]||[];const closed=f.length===n;const len=closed?tourLength(f,D):pathLength(f,D);return{key,color:ALG[key].color,name:ALG[key].name,len,finalLen:r.length,done:fi>=frames.length-1};}).sort((a,b)=>(a.done&&b.done?a.finalLen-b.finalLen:a.len-b.len));
+  const board=runs.map(({key,r,frames})=>{const fi=Math.min(frames.length-1,Math.floor(p*(frames.length-1)));const f=frames[fi]||[];const closed=f.length===n;const len=closed?tourLength(f,D):pathLength(f,D);return{key,color:ALG[key].color,name:ALG[key].name,len,finalLen:r.length,done:fi>=frames.length-1,sla:slaMinutes(r.tour,D,points)};}).sort((a,b)=>(a.done&&b.done?a.finalLen-b.finalLen:a.len-b.len));
+  const hasSla=points.some(p=>p.critical);
   const w=useWidth();const cols=w<880?"1fr":"minmax(0,1fr) 286px";const tiles=w<560?"1fr":w<880||keys.length<=4?"repeat(2,1fr)":"repeat(3,1fr)";
 
   return(
@@ -413,13 +424,14 @@ function RaceMode({points,D,n,scenario}){
         </div>
       </div>
       <div style={{...card,overflow:"hidden",alignSelf:"start"}}>
-        <div style={{padding:"12px 15px",borderBottom:BORDER,fontSize:14,fontWeight:900,textTransform:"uppercase",letterSpacing:.5,display:"flex",alignItems:"center",gap:8,background:R.paper}}><Flag size={15}/> Leaderboard</div>
+        <div style={{padding:"12px 15px",borderBottom:BORDER,fontSize:14,fontWeight:900,textTransform:"uppercase",letterSpacing:.5,display:"flex",alignItems:"center",gap:8,background:R.paper}}><Flag size={15}/> Leaderboard{hasSla&&<span style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:4,fontSize:9,fontWeight:800,color:R.red,letterSpacing:.3}}><AlertTriangle size={11}/>Last critical</span>}</div>
         {board.map((b,i)=>(
           <div key={b.key} className="rrow" style={{display:"flex",alignItems:"center",gap:10,padding:"10px 15px",borderTop:i?`1px solid #eceadf`:"none"}}>
             <span style={{fontFamily:"var(--mono)",fontSize:13,fontWeight:700,width:18,color:i===0?R.red:R.mut2}}>{i+1}</span>
             <span style={{width:10,height:10,borderRadius:3,background:b.color,border:`1.5px solid ${R.ink}`}}/>
             <span style={{flex:1,fontSize:12,fontWeight:800,textTransform:"uppercase",letterSpacing:.2}}>{b.name}</span>
             <span style={{fontFamily:"var(--mono)",fontSize:12,fontWeight:700}}>{km(b.len).toFixed(1)}</span>
+            {hasSla&&<span style={{fontFamily:"var(--mono)",fontSize:11,fontWeight:700,color:R.red,minWidth:46,textAlign:"right"}}>{b.sla!=null?fmtMin(b.sla):"—"}</span>}
           </div>
         ))}
         <div style={{padding:"12px 15px",fontSize:12,color:R.mut,borderTop:BORDER,lineHeight:1.55,fontWeight:500,background:R.paper}}>
